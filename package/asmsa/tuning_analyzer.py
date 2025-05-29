@@ -1,6 +1,8 @@
 from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors        
 import numpy as np
 import pickle
 import os
@@ -44,35 +46,52 @@ class TuningAnalyzer():
 
     #visualize trials in terms of trial_id and order
     def visualize_tuning(self, trial=None, num_trials=10):
-        if trial:
-            num_trials=len(self.sorted_trials)
-        # populate x axis with number of epochs from first model of first trial
-        first_model = list(self.sorted_trials[0]['results'].items())[0][0]
-        num_epochs = len(self.sorted_trials[0]['results'][first_model]['ae_loss'])
-        x = np.arange(start=0, stop=num_epochs, step=1)
-
-        # for trial in best_hp:
-        for i in range(len(self.sorted_trials)):
-            if i == num_trials:
-                break
-
-            _trial = self.sorted_trials[i]
-            if trial and trial != _trial["trial_id"]:
-                continue
-
-            print(f'Trial ID: {_trial["trial_id"]}')
-            for k,v in _trial['results'].items():
-                for plot, measure in [(311,'ae_loss'), (312,'dn_loss'), (313,'kl_div')]:
-                    plt.subplot(plot)
-                    plt.plot(x, _trial['results'][k][measure], label=k)
-                    plt.ylabel(measure)
-                    plt.ylim([0,max(_trial['results'][k][measure])])
-                    plt.autoscale()
-                    if plot != 313:
-                        plt.xticks([])
-            plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-            plt.xticks(range(0,num_epochs))
-            plt.show()
+            if trial:
+                num_trials=len(self.sorted_trials)
+            # populate x axis with number of epochs from first model of first trial
+            first_model = list(self.sorted_trials[0]['results'].items())[0][0]
+            num_epochs = len(self.sorted_trials[0]['results'][first_model]['ae_loss'])
+            x = np.arange(start=0, stop=num_epochs, step=1)
+            
+            # Crea una palette di colori distinti
+            colors = plt.cm.tab10(np.linspace(0, 1, 10))
+            colors = np.vstack([colors, plt.cm.Set3(np.linspace(0, 1, 12))])
+            
+            # for trial in best_hp:
+            for i in range(len(self.sorted_trials)):
+                if i == num_trials:
+                    break
+                _trial = self.sorted_trials[i]
+                if trial and trial != _trial["trial_id"]:
+                    continue
+                print(f'Trial ID: {_trial["trial_id"]}')
+                
+                # Crea una figura con 3 subplot
+                plt.figure(figsize=(10, 8))
+                
+                # Dizionario per mappare modelli a colori
+                model_colors = {}
+                color_idx = 0
+                
+                for k,v in _trial['results'].items():
+                    # Assegna un colore unico a ogni modello
+                    if k not in model_colors:
+                        model_colors[k] = colors[color_idx % len(colors)]
+                        color_idx += 1
+                        
+                    for plot, measure in [(311,'ae_loss'), (312,'dn_loss'), (313,'kl_div')]:
+                        plt.subplot(plot)
+                        plt.plot(x, _trial['results'][k][measure], label=k, color=model_colors[k])
+                        plt.ylabel(measure)
+                        plt.ylim([0,max(_trial['results'][k][measure])])
+                        plt.autoscale()
+                        if plot != 313:
+                            plt.xticks([])
+                
+                plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+                plt.xticks(range(0,num_epochs))
+                plt.tight_layout()
+                plt.show()
 
 
     def get_best_hp(self,num_trials=10):
