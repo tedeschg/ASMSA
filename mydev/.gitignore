@@ -1,0 +1,6 @@
+__pycache__/
+best_autoencoder_16d.keras
+best_autoencoder_2d.keras
+best_beta_vae.keras
+best_beta_vae_2d.keras
+logs/
