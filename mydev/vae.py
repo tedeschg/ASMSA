@@ -150,14 +150,10 @@ def build_asmsa_beta_vae(n_features, latent_dim=2, activation="gelu",
     )
     return vae, encoder, decoder
 
-# === Callback semplice per monitoraggio ===
-class BetaVAEMonitor(tf.keras.callbacks.Callback):
-    def on_epoch_end(self, epoch, logs=None):
-        if (epoch + 1) % 10 == 0:
-            kl_loss = logs.get('kl_loss', 0)
-            recon_loss = logs.get('reconstruction_loss', 0)
-            print(f"\nEpoca {epoch+1}: Beta={self.model.beta:.4f}, "
-                  f"KL={kl_loss:.6f}, Recon={recon_loss:.6f}")
+
+
+
+
 
 
 
