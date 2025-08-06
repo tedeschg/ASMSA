@@ -25,6 +25,7 @@ def process_trajectory(traj, conf):
     n_bb = len(bb_indices)
 
     ca_indices = traj.topology.select("name CA")
+    n_ca = len(ca_indices)
     # tutte le coppie i<j di CA
     pairs = np.array([
         (i, j) 
@@ -36,12 +37,6 @@ def process_trajectory(traj, conf):
     coords_bb = traj.xyz[:, bb_indices, :]
     # [n_frames, n_bb*3]
     coords = coords_bb.reshape(n_frames, -1)
-
-    # distanze tra tutte le CA e lunghezze dei legami
-    # (anche se non restituite, vengono comunque calcolate per eventuale uso futuro)
-    dists = md.compute_distances(traj, pairs)
-    bonds = [[b.atom1.index, b.atom2.index] for b in traj.topology.bonds]
-    bond_lengths = md.compute_distances(traj, bonds)
 
     # angoli di backbone (phi, psi)
     phi = md.compute_phi(traj)[1]
@@ -63,16 +58,14 @@ def process_trajectory(traj, conf):
     feat = np.concatenate([
         coords,
         phi_sin, phi_cos,
-        psi_sin, psi_cos,
-        chi1_sin, chi1_cos,
-        chi2_sin, chi2_cos
+        psi_sin, psi_cos
     ], axis=1)
-
+ 
     # normalizzazione [0,1]
     scaler = MinMaxScaler()
     features_normalized = scaler.fit_transform(feat)
 
-    return bb_indices, n_bb, features_normalized, scaler, coords
+    return ca_indices, n_ca, bb_indices, n_bb, features_normalized, scaler, coords
 
 
 def split_dataset(features_normalized, train_size=70, val_size=15, batch_size=64, seed=42):
@@ -133,7 +126,7 @@ def split_dataset(features_normalized, train_size=70, val_size=15, batch_size=64
     
     return ds_train, ds_val, ds_test, ds_all
 
-def plot_latent_space(latent_dim, encoder, dataset, conf, traj, target, bb_indices, cmap='rainbow', figsize=(8,8), model="ae"):
+def plot_latent_space(latent_dim, encoder, dataset, conf, traj, target, bb_indices, cmap='rainbow', figsize=(8,8), model="ae", exact=True):
 
     # Get embeddings
     results = encoder.predict(dataset)
@@ -141,7 +134,7 @@ def plot_latent_space(latent_dim, encoder, dataset, conf, traj, target, bb_indic
     if model == "ae":
         emb = np.array(results)
     elif model == "vae":
-        emb = np.array(results[2])  # z from (z_mean, z_log_var, z)
+        emb = np.array(results[2])  #  [2] z from (z_mean, z_log_var, z)
     else:
         raise ValueError(f"Unknown model type: {model}. Use 'ae' or 'vae'.") 
 
@@ -150,14 +143,17 @@ def plot_latent_space(latent_dim, encoder, dataset, conf, traj, target, bb_indic
     rms_tr = md.load_xtc(traj, top=rms_ref)
     rmsd = md.rmsd(rms_tr, rms_ref)
 
-    #z = np.random.normal(loc=0.0, scale=1.0, size=(latent_dim,))
-
-    dists = np.linalg.norm(emb - target, axis=1)
-    # 4a. Se vuoi, ad esempio, le K righe più vicine:
-    K = 1
-    idx_closest = np.argsort(dists)[:K]
-    sample = emb[idx_closest].reshape(1, latent_dim)
-    
+    if model == 'vae':
+        z = np.random.normal(loc=0.0, scale=1.0, size=(latent_dim,))
+        sample = z
+    elif model == 'ae':
+        if exact == True:
+            dists = np.linalg.norm(emb - target, axis=1)
+            idx_closest = np.argsort(dists)[1]
+            sample = emb[idx_closest].reshape(1, latent_dim)
+        elif exact == False:
+            sample = target
+            
     plt.figure(figsize=figsize)
 
     plt.scatter(emb[:,0], emb[:,1], c=rmsd,s=0.5, cmap=cmap)
@@ -177,7 +173,7 @@ class BetaVAEMonitor(tf.keras.callbacks.Callback):
             print(f"\nEpoca {epoch+1}: Beta={self.model.beta:.4f}, "
                   f"KL={kl_loss:.6f}, Recon={recon_loss:.6f}")
 
-def callbacks(log_dir, latent_dim, monitor="val_loss"):
+def callbacks(log_dir, latent_dim, monitor="val_loss", model='vae'):
 
     cb = [
         tf.keras.callbacks.TensorBoard(
@@ -189,10 +185,10 @@ def callbacks(log_dir, latent_dim, monitor="val_loss"):
         tf.keras.callbacks.EarlyStopping(
             monitor=monitor,
             patience=15,
-            min_delta=1e-5,
+            min_delta=1e-6,
             restore_best_weights=True,
             verbose=1,
-            mode='min'
+            mode="min"
         ),
         tf.keras.callbacks.ReduceLROnPlateau(
             monitor=monitor,
@@ -202,15 +198,22 @@ def callbacks(log_dir, latent_dim, monitor="val_loss"):
             verbose=1
         ),
         tf.keras.callbacks.ModelCheckpoint(
-            filepath=f'best_beta_vae_{latent_dim}d.keras',
+            filepath=f'ae_{latent_dim}d.keras',
             monitor=monitor,
             save_best_only=True,
             save_weights_only=False,
             verbose=1
-        ),
-        BetaVAEMonitor()
+        )]
+    if model == 'vae':
+        cb.append(BetaVAEMonitor())
 
-    ]
 
     return cb
-
+'''
+class ProteinStructureMonitor(tf.keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        if logs:
+            var_ratio = logs.get('val_var_ratio_metric', 0)
+            if var_ratio > 1.5 or var_ratio < 0.5:
+                print(f"⚠️  Epoch {epoch}: Variance ratio anomalo: {var_ratio:.4f}")
+                '''
