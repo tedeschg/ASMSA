@@ -163,17 +163,9 @@ def plot_latent_space(latent_dim, encoder, dataset, conf, traj, target, bb_indic
 
 
 
-# === Callback semplice per monitoraggio ===
-class BetaVAEMonitor(tf.keras.callbacks.Callback):
-    def on_epoch_end(self, epoch, logs=None):
-        if (epoch + 1) % 10 == 0:
-            kl_loss = logs.get('kl_loss', 0)
-            recon_loss = logs.get('reconstruction_loss', 0)
-            print(f"\nEpoca {epoch+1}: Beta={self.model.beta:.4f}, "
-                  f"KL={kl_loss:.6f}, Recon={recon_loss:.6f}")
+from vae import BetaVAEMonitor
 
 def callbacks(log_dir, latent_dim, monitor="val_loss", model='vae'):
-
     cb = [
         tf.keras.callbacks.TensorBoard(
             log_dir=log_dir,
@@ -196,16 +188,25 @@ def callbacks(log_dir, latent_dim, monitor="val_loss", model='vae'):
             min_lr=1e-7,
             verbose=1
         ),
+    ]
+
+    if model == 'ae':
+        filepath = f'ae_{latent_dim}d.keras'
+    else:
+        filepath = f'vae_{latent_dim}d.keras'
+
+    cb.append(
         tf.keras.callbacks.ModelCheckpoint(
-            filepath=f'ae_{latent_dim}d.keras',
+            filepath=filepath,
             monitor=monitor,
             save_best_only=True,
             save_weights_only=False,
             verbose=1
-        )]
+        )
+    )
+
     if model == 'vae':
         cb.append(BetaVAEMonitor())
-
 
     return cb
 '''
