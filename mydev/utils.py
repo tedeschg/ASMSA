@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import mdtraj as md
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras import layers, models, metrics, backend as K
+
 
 def process_trajectory(traj, conf):
     
@@ -34,9 +34,9 @@ def process_trajectory(traj, conf):
     ])
 
     # coordinate backbone [n_frames, n_bb, 3]
-    coords_bb = traj.xyz[:, bb_indices, :]
+    coords_p = traj.xyz[:, p_indices, :]
     # [n_frames, n_bb*3]
-    coords = coords_bb.reshape(n_frames, -1)
+    coords = coords_p.reshape(n_frames, -1)
 
     # angoli di backbone (phi, psi)
     phi = md.compute_phi(traj)[1]
@@ -58,7 +58,9 @@ def process_trajectory(traj, conf):
     feat = np.concatenate([
         coords,
         phi_sin, phi_cos,
-        psi_sin, psi_cos
+        psi_sin, psi_cos,
+        chi1_sin,chi1_cos,
+        chi2_sin,chi2_cos
     ], axis=1)
  
     # normalizzazione [0,1]
