@@ -145,16 +145,13 @@ def plot_latent_space(latent_dim, encoder, dataset, conf, traj, target, bb_indic
     rms_tr = md.load_xtc(traj, top=rms_ref)
     rmsd = md.rmsd(rms_tr, rms_ref)
 
-    if model == 'vae':
-        z = np.random.normal(loc=0.0, scale=1.0, size=(latent_dim,))
-        sample = z
-    elif model == 'ae':
-        if exact == True:
-            dists = np.linalg.norm(emb - target, axis=1)
-            idx_closest = np.argsort(dists)[1]
-            sample = emb[idx_closest].reshape(1, latent_dim)
-        elif exact == False:
-            sample = target
+
+    if exact == True:
+        dists = np.linalg.norm(emb - target, axis=1)
+        idx_closest = np.argsort(dists)[1]
+        sample = emb[idx_closest].reshape(1, latent_dim)
+    elif exact == False:
+        sample = target
             
     plt.figure(figsize=figsize)
 
