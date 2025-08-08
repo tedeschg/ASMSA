@@ -106,13 +106,6 @@ class BetaVAE(models.Model):
             "kl_loss": self.kl_loss_tracker.result(),
         }
 
-class BetaVAEMonitor(tf.keras.callbacks.Callback):
-    def on_epoch_end(self, epoch, logs=None):
-        if (epoch + 1) % 10 == 0:
-            kl_loss = logs.get('kl_loss', 0)
-            recon_loss = logs.get('reconstruction_loss', 0)
-            print(f"\nEpoca {epoch+1}: Beta={self.model.beta:.4f}, "
-                  f"KL={kl_loss:.6f}, Recon={recon_loss:.6f}")
 
 # === Builder Function ===
 def asmsa_beta_vae(n_features, latent_dim=2,
