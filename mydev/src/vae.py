@@ -133,7 +133,7 @@ def asmsa_beta_vae(n_features, latent_dim=2,
     y = asmsa_block(dec_input, 32, activation, "dec1")
     y = asmsa_block(y, 64, activation, "dec2")
     y = asmsa_block(y, 128, activation, "dec3")
-    dec_output = layers.Dense(n_features, activation="sigmoid", name="dec_output")(y)
+    dec_output = layers.Dense(n_features, activation="linear", name="dec_output")(y)
     decoder = models.Model(dec_input, dec_output, name="decoder")
 
     # Assemble and compile VAE

@@ -54,20 +54,26 @@ def process_trajectory(traj, conf):
     chi2_sin = np.sin(chi2)
     chi2_cos = np.cos(chi2)
 
-    # concatenazione di tutte le feature
-    feat = np.concatenate([
-        coords,
+    angles = np.concatenate([
         phi_sin, phi_cos,
         psi_sin, psi_cos,
-        chi1_sin,chi1_cos,
-        chi2_sin,chi2_cos
+        chi1_sin, chi1_cos,
+        chi2_sin, chi2_cos
     ], axis=1)
- 
-    # normalizzazione [0,1]
-    scaler = MinMaxScaler()
-    features_normalized = scaler.fit_transform(feat)
+    
 
-    return ca_indices, n_ca, bb_indices, n_bb, features_normalized, scaler, coords
+    scaler_coords = MinMaxScaler(feature_range=(-1, 1))
+    coords_normalized = scaler_coords.fit_transform(coords)
+    scaler_angles = MinMaxScaler(feature_range=(-1, 1))
+    angles_normalized = scaler_angles.fit_transform(angles)
+
+    # concatenazione finale
+    features_normalized = np.concatenate([
+        coords_normalized,
+        angles_normalized
+    ], axis=1)
+
+    return ca_indices, n_ca, bb_indices, n_bb, features_normalized, scaler_coords, scaler_angles, coords
 
 
 def split_dataset(features_normalized, train_size=70, val_size=15, batch_size=64, seed=42):
