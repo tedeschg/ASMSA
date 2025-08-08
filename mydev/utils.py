@@ -163,57 +163,7 @@ def plot_latent_space(latent_dim, encoder, dataset, conf, traj, target, bb_indic
 
 
 
-from vae import BetaVAEMonitor
 
-def callbacks(log_dir, latent_dim, monitor="val_loss", model='vae'):
-    cb = [
-        tf.keras.callbacks.TensorBoard(
-            log_dir=log_dir,
-            histogram_freq=1,
-            write_graph=True,
-            update_freq='epoch',
-        ),
-        tf.keras.callbacks.EarlyStopping(
-            monitor=monitor,
-            patience=15,
-            min_delta=1e-6,
-            restore_best_weights=True,
-            verbose=1,
-            mode="min"
-        ),
-        tf.keras.callbacks.ReduceLROnPlateau(
-            monitor=monitor,
-            factor=0.5,
-            patience=7,
-            min_lr=1e-7,
-            verbose=1
-        ),
-    ]
 
-    if model == 'ae':
-        filepath = f'ae_{latent_dim}d.keras'
-    else:
-        filepath = f'vae_{latent_dim}d.keras'
 
-    cb.append(
-        tf.keras.callbacks.ModelCheckpoint(
-            filepath=filepath,
-            monitor=monitor,
-            save_best_only=True,
-            save_weights_only=False,
-            verbose=1
-        )
-    )
 
-    if model == 'vae':
-        cb.append(BetaVAEMonitor())
-
-    return cb
-'''
-class ProteinStructureMonitor(tf.keras.callbacks.Callback):
-    def on_epoch_end(self, epoch, logs=None):
-        if logs:
-            var_ratio = logs.get('val_var_ratio_metric', 0)
-            if var_ratio > 1.5 or var_ratio < 0.5:
-                print(f"⚠️  Epoch {epoch}: Variance ratio anomalo: {var_ratio:.4f}")
-                '''
