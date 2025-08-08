@@ -1,5 +1,5 @@
 import tensorflow as tf
-from b_implement import BetaVAEMonitor, BetaWarmupCallback
+from b_implement import BetaVAEMonitor, BetaWarmupCallback, HarmonicWarmup
 
 def callbacks(log_dir, latent_dim, monitor="val_loss", model='vae'):
     cb = [
@@ -42,7 +42,8 @@ def callbacks(log_dir, latent_dim, monitor="val_loss", model='vae'):
     )
 
     if model == 'vae':
-        cb.append(BetaWarmupCallback(8, 1000))
+        cb.append(BetaWarmupCallback(8, 500))
+        #cb.append(HarmonicWarmup(warmup_steps=20000, beta_max=1.0, recon_max=1.0))
         cb.append(BetaVAEMonitor())
 
     return cb

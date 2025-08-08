@@ -1,4 +1,5 @@
 import tensorflow as tf
+import math
 
 class BetaVAEMonitor(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
@@ -28,3 +29,30 @@ class BetaWarmupCallback(tf.keras.callbacks.Callback):
         new_beta = self.beta_start + p * (self.beta_target - self.beta_start)
         self.model.beta = new_beta
         print(f"→ Epoca {epoch+1}: beta = {new_beta:.6f}")
+
+class HarmonicWarmup(tf.keras.callbacks.Callback):
+    def __init__(self, warmup_steps, beta_max=1.0, recon_max=1.0):
+        super().__init__()
+        self.warmup_steps = float(warmup_steps)
+        self.beta_max     = beta_max
+        self.recon_max    = recon_max
+
+    def on_train_batch_begin(self, batch, logs=None):
+        step = float(self.model.optimizer.iterations)
+        t = min(1.0, step / self.warmup_steps)
+
+        new_beta = self.beta_max * math.sin(0.5 * math.pi * t)
+        new_rw   = self.recon_max * math.cos(0.5 * math.pi * t)
+
+        # aggiorna sia tf.Variable sia semplice attributo
+        if isinstance(self.model.beta, tf.Variable):
+            self.model.beta.assign(new_beta)
+        else:
+            self.model.beta = new_beta
+
+        if isinstance(self.model.recon_loss_weight, tf.Variable):
+            self.model.recon_loss_weight.assign(new_rw)
+        else:
+            self.model.recon_loss_weight = new_rw
+
+        tf.print(f"β={new_beta:.4f}, recon_w={new_rw:.4f}")
