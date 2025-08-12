@@ -12,12 +12,9 @@ def asmsa_ae(n_features, latent_dim=2, activation="gelu"):
 
     enc_input_layer = layers.Input(shape=(n_features,), name="enc_input")
     
-    x = asmsa_block(enc_input_layer, 256, "enc_1")
-    x = asmsa_block(x, 128, "enc_2")
-    x = asmsa_block(x, 64, "enc_3")
-    x = asmsa_block(x, 32, "enc_4")
-
-
+    x = asmsa_block(enc_input_layer, 128, "enc_1")
+    x = asmsa_block(x, 64, "enc_2")
+    x = asmsa_block(x, 32, "enc_3")
 
     latent = layers.Dense(latent_dim, name="latent")(x)
     encoder = models.Model(inputs=enc_input_layer, outputs=latent, name="encoder")
@@ -26,10 +23,8 @@ def asmsa_ae(n_features, latent_dim=2, activation="gelu"):
     x = asmsa_block(dec_input_layer, 32, "dec_1")
     x = asmsa_block(x, 64, "dec_2")
     x = asmsa_block(x, 128, "dec_3")
-    x = asmsa_block(x, 256, "dec_4")
 
-
-    dec_output_layer = layers.Dense(n_features, activation="linear", name="dec_output_layer")(x)
+    dec_output_layer = layers.Dense(n_features, activation="tanh", name="dec_output_layer")(x)
     decoder = models.Model(inputs=dec_input_layer, outputs=dec_output_layer, name="decoder")
 
     # --- Autoencoder ---
