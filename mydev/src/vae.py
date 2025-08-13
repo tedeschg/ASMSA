@@ -50,8 +50,7 @@ class BetaVAE(models.Model):
 
             mse = tf.reduce_mean(tf.square(x - reconstruction))
             mae = tf.reduce_mean(tf.abs(x - reconstruction))
-            #recon_loss = (0.7 * mse + 0.3 * mae) * self.recon_loss_weight
-            recon_loss = (0.8 * mse + 0.2 * mae)
+            recon_loss = (0.8 * mse + 0.2 * mae) * self.recon_loss_weight
 
             z_log_var_clamped = tf.clip_by_value(z_log_var, -10.0, 10.0)
             kl = -0.5 * tf.reduce_mean(
@@ -84,7 +83,8 @@ class BetaVAE(models.Model):
 
         mse = tf.reduce_mean(tf.square(x - reconstruction))
         mae = tf.reduce_mean(tf.abs(x - reconstruction))
-        recon_loss = (0.7 * mse + 0.3 * mae) * self.recon_loss_weight
+        # FIXED: Use same weights as train_step for consistency
+        recon_loss = (0.8 * mse + 0.2 * mae) * self.recon_loss_weight
 
         z_log_var_clamped = tf.clip_by_value(z_log_var, -10.0, 10.0)
         kl = -0.5 * tf.reduce_mean(
@@ -100,7 +100,6 @@ class BetaVAE(models.Model):
         self.reconstruction_loss_tracker.update_state(recon_loss)
         self.kl_loss_tracker.update_state(kl_loss)
 
-        
         return {
             "loss": self.total_loss_tracker.result(),
             "reconstruction_loss": self.reconstruction_loss_tracker.result(),
@@ -110,8 +109,8 @@ class BetaVAE(models.Model):
 
 # === Builder Function ===
 def asmsa_beta_vae(n_features, latent_dim=2,
-                         activation="gelu",
-                         recon_loss_weight=1.0, beta=0.1):
+                   activation="gelu",
+                   recon_loss_weight=1.0, beta=0.1):
     # Encoder
     enc_input = layers.Input(shape=(n_features,), name="enc_input")
     x = asmsa_block(enc_input, 128, activation, "enc1")
@@ -123,17 +122,14 @@ def asmsa_beta_vae(n_features, latent_dim=2,
     z = Sampling()([z_mean, z_log_var])
     encoder = models.Model(enc_input, [z_mean, z_log_var, z], name="encoder")
 
-    # Initialize log_var bias for more variance
-    for layer in encoder.layers:
-        if 'z_log_var' in getattr(layer, 'name', '') and hasattr(layer, 'bias'):
-            layer.bias.assign(tf.constant([-1.0] * layer.units, dtype=tf.float32))
-
     # Decoder
     dec_input = layers.Input(shape=(latent_dim,), name="dec_input")
     y = asmsa_block(dec_input, 32, activation, "dec1")
     y = asmsa_block(y, 64, activation, "dec2")
     y = asmsa_block(y, 128, activation, "dec3")
-    dec_output = layers.Dense(n_features, activation="linear", name="dec_output")(y)
+    # FIXED: Consider if 'tanh' is appropriate for your data range
+    # Use 'linear' if data is not normalized to [-1, 1]
+    dec_output = layers.Dense(n_features, activation="tanh", name="dec_output")(y)
     decoder = models.Model(dec_input, dec_output, name="decoder")
 
     # Assemble and compile VAE
@@ -141,9 +137,21 @@ def asmsa_beta_vae(n_features, latent_dim=2,
                   recon_loss_weight=recon_loss_weight,
                   beta=beta,
                   name="beta_vae")
-    vae.compile(
-        optimizer=tf.keras.optimizers.Adam(),
+    
+    learning_rate = 1e-4
+    optimizer = tf.keras.optimizers.AdamW(
+        learning_rate=learning_rate,
+        weight_decay=1e-5, 
+        beta_1=0.9,
+        beta_2=0.999
     )
+    vae.compile(optimizer=optimizer)
+
+    # FIXED: Initialize z_log_var bias after compilation for better control
+    for layer in encoder.layers:
+        if hasattr(layer, 'name') and 'z_log_var' in layer.name and hasattr(layer, 'bias'):
+            if layer.bias is not None:
+                layer.bias.assign(tf.constant([-1.0] * layer.units, dtype=tf.float32))
 
     return vae, encoder, decoder
 

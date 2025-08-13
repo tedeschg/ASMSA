@@ -1,15 +1,30 @@
 import tensorflow as tf
 import math
 
+
 class BetaVAEMonitor(tf.keras.callbacks.Callback):
+    """Monitora e stampa le metriche della Beta-VAE ogni N epoche."""
+    
+    def __init__(self, print_every=10):
+        super().__init__()
+        self.print_every = print_every
+    
     def on_epoch_end(self, epoch, logs=None):
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % self.print_every == 0:
             kl_loss = logs.get('kl_loss', 0)
             recon_loss = logs.get('reconstruction_loss', 0)
-            print(f"\nEpoca {epoch+1}: Beta={self.model.beta:.4f}, "
-                  f"KL={kl_loss:.6f}, Recon={recon_loss:.6f}")
+            val_kl_loss = logs.get('val_kl_loss', 0)
+            val_recon_loss = logs.get('val_reconstruction_loss', 0)
+            
+            print(f"\nEpoca {epoch+1}: Beta={self.model.beta:.4f}")
+            print(f"  Train - KL={kl_loss:.6f}, Recon={recon_loss:.6f}")
+            if val_kl_loss > 0 or val_recon_loss > 0:
+                print(f"  Val   - KL={val_kl_loss:.6f}, Recon={val_recon_loss:.6f}")
+
 
 class BetaWarmupCallback(tf.keras.callbacks.Callback):
+    """Implementa il warmup graduale del parametro beta."""
+    
     def __init__(self, beta_target, warmup_epochs):
         super().__init__()
         self.beta_target = beta_target
@@ -23,36 +38,15 @@ class BetaWarmupCallback(tf.keras.callbacks.Callback):
               f"until beta = {self.beta_target:.6f} in {self.warmup_epochs} epoche.")
 
     def on_epoch_begin(self, epoch, logs=None):
-        # frazione di warmup completata
-        p = min(1.0, float(epoch) / self.warmup_epochs)
-        # interpolazione lineare tra beta_start e beta_target
-        new_beta = self.beta_start + p * (self.beta_target - self.beta_start)
-        self.model.beta = new_beta
-        print(f"→ Epoca {epoch+1}: beta = {new_beta:.6f}")
-
-class HarmonicWarmup(tf.keras.callbacks.Callback):
-    def __init__(self, warmup_steps, beta_max=1.0, recon_max=1.0):
-        super().__init__()
-        self.warmup_steps = float(warmup_steps)
-        self.beta_max     = beta_max
-        self.recon_max    = recon_max
-
-    def on_train_batch_begin(self, batch, logs=None):
-        step = float(self.model.optimizer.iterations)
-        t = min(1.0, step / self.warmup_steps)
-
-        new_beta = self.beta_max * math.sin(0.5 * math.pi * t)
-        new_rw   = self.recon_max * math.cos(0.5 * math.pi * t)
-
-        # aggiorna sia tf.Variable sia semplice attributo
-        if isinstance(self.model.beta, tf.Variable):
-            self.model.beta.assign(new_beta)
-        else:
+        if epoch < self.warmup_epochs:
+            # frazione di warmup completata
+            p = float(epoch) / self.warmup_epochs
+            # interpolazione lineare tra beta_start e beta_target
+            new_beta = self.beta_start + p * (self.beta_target - self.beta_start)
             self.model.beta = new_beta
-
-        if isinstance(self.model.recon_loss_weight, tf.Variable):
-            self.model.recon_loss_weight.assign(new_rw)
+            print(f"→ Epoca {epoch+1}: beta = {new_beta:.6f}")
         else:
-            self.model.recon_loss_weight = new_rw
-
-        tf.print(f"β={new_beta:.4f}, recon_w={new_rw:.4f}")
+            # assicurati che beta sia esattamente il target dopo il warmup
+            if self.model.beta != self.beta_target:
+                self.model.beta = self.beta_target
+                print(f"→ Epoca {epoch+1}: beta = {self.beta_target:.6f} (target raggiunto)")
