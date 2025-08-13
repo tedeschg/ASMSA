@@ -1,5 +1,5 @@
 import tensorflow as tf
-from src.b_implement import BetaVAEMonitor, BetaWarmupCallback
+from src.b_implement import BetaVAEMonitor, KLThresholdCallback
 
 def callbacks(log_dir, latent_dim, monitor="val_loss", model='vae'):
     cb = [
@@ -42,6 +42,14 @@ def callbacks(log_dir, latent_dim, monitor="val_loss", model='vae'):
     )
 
     if model == 'vae':
-        cb.append(BetaVAEMonitor(print_every=10))
-        cb.append(BetaWarmupCallback(beta_target=1, warmup_epochs=200)),
+        #cb.append(BetaVAEMonitor())
+        cb.append(KLThresholdCallback(
+        target_kl=5.0,        # oppure 4.5–6.0
+        adjustment_rate=0.05, # 0.04–0.06 tipico
+        deadband=0.20,        # 0.15 se vuoi più reattività
+        ema_alpha=0.10,       # smoothing ok
+        beta_min=1e-4,
+        beta_max=8e-4,        # o 1e-3 se serve più spinta
+        kl_key="val_kl_loss_unweighted"
+    ))
     return cb
