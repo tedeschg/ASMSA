@@ -18,22 +18,39 @@ def asmsa_block(x, neurons, activation, name_prefix):
     return x
 
 
-# ==== BetaVAE “snello”: β come tf.Variable + logging KL (unw/pesata) ====
+
+
 class BetaVAE(models.Model):
-    def __init__(self, encoder, decoder, recon_loss_weight=1.0, beta=1e-4, **kwargs):
+    """
+    VAE with:
+      - β as a non-trainable tf.Variable you can adjust from callbacks
+      - Optional 'cov_reg' whitening regularizer (mean->0, covariance->I)
+      - Custom training loop (no `loss=` in compile)
+      - Logged metrics: total loss, recon, KL (unweighted and β-weighted),
+        whitening regularizer value, β, and current cov_reg weight
+    """
+    def __init__(self, encoder, decoder,
+                 recon_loss_weight=1.0,
+                 beta=0.1,
+                 cov_reg=0.0,
+                 **kwargs):
         super().__init__(**kwargs)
         self.encoder = encoder
         self.decoder = decoder
         self.recon_loss_weight = float(recon_loss_weight)
-        # β dinamico aggiornabile dal callback
-        self.beta = tf.Variable(float(beta), trainable=False, dtype=tf.float32, name="beta")
 
-        # metriche/trackers
+        # Non-trainable variables so callbacks can adjust them
+        self.beta    = tf.Variable(float(beta),    trainable=False, dtype=tf.float32, name="beta")
+        self.cov_reg = tf.Variable(float(cov_reg), trainable=False, dtype=tf.float32, name="cov_reg")
+
+        # Trackers / metrics
         self.total_loss_tracker          = metrics.Mean(name="loss")
         self.reconstruction_loss_tracker = metrics.Mean(name="reconstruction_loss")
-        self.kl_unw_tracker              = metrics.Mean(name="kl_loss_unweighted")  # nats/campione
+        self.kl_unw_tracker              = metrics.Mean(name="kl_loss_unweighted")  # nats per sample
         self.kl_w_tracker                = metrics.Mean(name="kl_loss")             # β * KL
+        self.whiten_reg_tracker          = metrics.Mean(name="whiten_reg")
         self.beta_tracker                = metrics.Mean(name="beta")
+        self.covreg_tracker              = metrics.Mean(name="cov_reg_weight")
 
     @property
     def metrics(self):
@@ -42,7 +59,9 @@ class BetaVAE(models.Model):
             self.reconstruction_loss_tracker,
             self.kl_unw_tracker,
             self.kl_w_tracker,
+            self.whiten_reg_tracker,
             self.beta_tracker,
+            self.covreg_tracker,
         ]
 
     def call(self, inputs):
@@ -50,67 +69,97 @@ class BetaVAE(models.Model):
         return self.decoder(z)
 
     def _compute_losses(self, x, reconstruction, z_mean, z_log_var):
-        # Ricostruzione (media per elemento)
+        # --- Reconstruction loss (mean per element); tweak weights if you like ---
         mse = tf.reduce_mean(tf.square(x - reconstruction))
         mae = tf.reduce_mean(tf.abs(x - reconstruction))
         recon_loss = (0.8 * mse + 0.2 * mae) * self.recon_loss_weight
 
-        # KL non pesata: somma sulle latenti, media sul batch
+        # --- Unweighted KL (nats per sample): sum over latent dims, mean over batch ---
         z_log_var = tf.clip_by_value(z_log_var, -10.0, 10.0)
         kl_unw = -0.5 * tf.reduce_mean(
-            tf.reduce_sum(1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var), axis=1)
+            tf.reduce_sum(1.0 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var), axis=1)
         )
 
-        # KL pesata
+        # --- β-weighted KL ---
         kl_w = self.beta * kl_unw
 
-        total_loss = recon_loss + kl_w
-        return total_loss, recon_loss, kl_unw, kl_w
+        # --- Whitening regularizer (ALWAYS computed; scaled by cov_reg) ---
+        #     This avoids Python 'if' on tensors (no graph-mode issues).
+        mu = tf.cast(z_mean, tf.float32)                 # (B, d)
+        b  = tf.cast(tf.shape(mu)[0], tf.float32)
+        d  = tf.shape(mu)[1]
+
+        mean_mu  = tf.reduce_mean(mu, axis=0)           # (d,)
+        mean_pen = tf.reduce_sum(tf.square(mean_mu))    # scalar
+
+        mu_centered = mu - mean_mu
+        denom = tf.maximum(b - 1.0, 1.0)                # avoid div/0 when batch=1
+        cov = tf.matmul(mu_centered, mu_centered, transpose_a=True) / denom  # (d, d)
+        eye = tf.eye(d, dtype=tf.float32)
+        cov_pen = tf.reduce_mean(tf.square(cov - eye))  # scalar
+
+        reg = tf.cast(self.cov_reg, tf.float32) * (cov_pen + mean_pen)
+
+        total = recon_loss + kl_w + reg
+        return total, recon_loss, kl_unw, kl_w, reg
 
     def train_step(self, data):
         x = data[0] if isinstance(data, (tuple, list)) else data
         with tf.GradientTape() as tape:
             z_mean, z_log_var, z = self.encoder(x, training=True)
             reconstruction       = self.decoder(z, training=True)
-            total_loss, recon_loss, kl_unw, kl_w = self._compute_losses(x, reconstruction, z_mean, z_log_var)
+            total, recon, kl_unw, kl_w, reg = self._compute_losses(
+                x, reconstruction, z_mean, z_log_var
+            )
 
-        grads = tape.gradient(total_loss, self.trainable_weights)
+        grads = tape.gradient(total, self.trainable_weights)
         grads = [tf.clip_by_norm(g, 1.0) if g is not None else g for g in grads]
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
 
-        self.total_loss_tracker.update_state(total_loss)
-        self.reconstruction_loss_tracker.update_state(recon_loss)
+        self.total_loss_tracker.update_state(total)
+        self.reconstruction_loss_tracker.update_state(recon)
         self.kl_unw_tracker.update_state(kl_unw)
         self.kl_w_tracker.update_state(kl_w)
+        self.whiten_reg_tracker.update_state(reg)
         self.beta_tracker.update_state(self.beta)
+        self.covreg_tracker.update_state(self.cov_reg)
 
         return {
             "loss": self.total_loss_tracker.result(),
             "reconstruction_loss": self.reconstruction_loss_tracker.result(),
             "kl_loss_unweighted": self.kl_unw_tracker.result(),
             "kl_loss": self.kl_w_tracker.result(),
+            "whiten_reg": self.whiten_reg_tracker.result(),
             "beta": self.beta_tracker.result(),
+            "cov_reg_weight": self.covreg_tracker.result(),
         }
 
     def test_step(self, data):
         x = data[0] if isinstance(data, (tuple, list)) else data
         z_mean, z_log_var, z = self.encoder(x, training=False)
         reconstruction       = self.decoder(z, training=False)
-        total_loss, recon_loss, kl_unw, kl_w = self._compute_losses(x, reconstruction, z_mean, z_log_var)
+        total, recon, kl_unw, kl_w, reg = self._compute_losses(
+            x, reconstruction, z_mean, z_log_var
+        )
 
-        self.total_loss_tracker.update_state(total_loss)
-        self.reconstruction_loss_tracker.update_state(recon_loss)
+        self.total_loss_tracker.update_state(total)
+        self.reconstruction_loss_tracker.update_state(recon)
         self.kl_unw_tracker.update_state(kl_unw)
         self.kl_w_tracker.update_state(kl_w)
+        self.whiten_reg_tracker.update_state(reg)
         self.beta_tracker.update_state(self.beta)
+        self.covreg_tracker.update_state(self.cov_reg)
 
         return {
             "loss": self.total_loss_tracker.result(),
             "reconstruction_loss": self.reconstruction_loss_tracker.result(),
             "kl_loss_unweighted": self.kl_unw_tracker.result(),
             "kl_loss": self.kl_w_tracker.result(),
+            "whiten_reg": self.whiten_reg_tracker.result(),
             "beta": self.beta_tracker.result(),
+            "cov_reg_weight": self.covreg_tracker.result(),
         }
+
 
 
 # ==== Builder: encoder/decoder + compile ====
@@ -152,7 +201,11 @@ def asmsa_beta_vae(n_features, latent_dim=2, activation="gelu",
     )
 
     # Assembla e compila
-    vae = BetaVAE(encoder, decoder, recon_loss_weight=recon_loss_weight, beta=beta, name="beta_vae")
+    vae = BetaVAE(encoder, decoder,
+              recon_loss_weight=1.0,
+              beta=1e-4,     # initial β
+              cov_reg=0.0,  # start whitening OFF
+              name="beta_vae")   
     vae.compile(optimizer=optimizer)
     return vae, encoder, decoder
 

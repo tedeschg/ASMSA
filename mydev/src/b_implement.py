@@ -1,57 +1,81 @@
 import tensorflow as tf
 
+import math
+import tensorflow as tf
+
 class KLThresholdCallback(tf.keras.callbacks.Callback):
     """
-    Regola β per mantenere la KL (NON pesata) vicino a un target.
-    - EMA per ridurre jitter
-    - Deadband per evitare correzioni inutili
-    - Usa tf.Variable.assign per aggiornare β
+    Keeps the *unweighted* KL (nats per sample) near a target by adjusting β.
+    Uses an EMA of KL and a deadband around the target to avoid jitter.
+
+    - If KL_ema < low  => increase capacity => decrease β (down to beta_min)
+    - If KL_ema > high => decrease capacity => increase β (up to beta_max)
+    - Else (within deadband): leave β unchanged
+
+    Notes:
+      * `kl_key` should be the unweighted KL you log, e.g. 'val_kl_loss_unweighted'.
+      * β is expected to be a non-trainable tf.Variable on the model.
     """
     def __init__(self,
-                 target_kl,
-                 adjustment_rate=0.07,
-                 deadband=0.2,
-                 ema_alpha=0.1,
-                 beta_min=1e-4,
-                 beta_max=6e-3,
-                 kl_key="kl_loss_unweighted"):  # puoi mettere "val_kl_loss_unweighted"
+                 target_kl: float,
+                 adjustment_rate: float = 0.05,
+                 deadband: float = 0.20,
+                 ema_alpha: float = 0.10,
+                 beta_min: float = 1e-4,
+                 beta_max: float = 1e-3,
+                 kl_key: str = "val_kl_loss_unweighted",
+                 print_every: int = 5):
         super().__init__()
         self.target_kl = float(target_kl)
-        self.rate      = float(adjustment_rate)
-        self.deadband  = float(deadband)
+        self.adjustment_rate = float(adjustment_rate)
+        self.deadband = float(deadband)
         self.ema_alpha = float(ema_alpha)
-        self.beta_min  = float(beta_min)
-        self.beta_max  = float(beta_max)
-        self.kl_key    = kl_key
-        self._kl_ema   = None
+        self.beta_min = float(beta_min)
+        self.beta_max = float(beta_max)
+        self.kl_key = kl_key
+        self.print_every = int(print_every)
+        self._ema = None
+
+    def _update_ema(self, val):
+        self._ema = val if self._ema is None else (1 - self.ema_alpha) * self._ema + self.ema_alpha * val
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
-        if self.kl_key not in logs:
+        kl = logs.get(self.kl_key, None)
+        if kl is None:
+            kl = logs.get("kl_loss_unweighted", None)  # fallback to train KL if val missing
+        if kl is None:
+            if (epoch + 1) % self.print_every == 0:
+                print(f"[KLThresholdCallback] KL key '{self.kl_key}' not found in logs.")
             return
 
-        kl = float(logs[self.kl_key])
-        # EMA della KL
-        self._kl_ema = kl if self._kl_ema is None else (1 - self.ema_alpha) * self._kl_ema + self.ema_alpha * kl
+        kl = float(kl)
+        self._update_ema(kl)
 
         low  = self.target_kl * (1 - self.deadband)
         high = self.target_kl * (1 + self.deadband)
 
-        beta_val = float(self.model.beta.numpy())
-        if self._kl_ema < low:
-            beta_val *= (1 - self.rate)   # KL bassa -> β↓ (così la KL sale)
+        beta_now = float(self.model.beta.numpy())
+        action = "="
+
+        if self._ema < low:
+            # KL too low -> increase capacity -> decrease β
+            beta_new = max(self.beta_min, beta_now * (1.0 - self.adjustment_rate))
             action = "β↓"
-        elif self._kl_ema > high:
-            beta_val *= (1 + self.rate)   # KL alta  -> β↑ (così la KL scende)
+        elif self._ema > high:
+            # KL too high -> decrease capacity -> increase β
+            beta_new = min(self.beta_max, beta_now * (1.0 + self.adjustment_rate))
             action = "β↑"
         else:
-            action = "β="
+            beta_new = beta_now
 
-        beta_val = min(self.beta_max, max(self.beta_min, beta_val))
-        self.model.beta.assign(beta_val)
+        if beta_new != beta_now:
+            self.model.beta.assign(beta_new)
 
-        if (epoch + 1) % 5 == 0:
-            print(f"KL(unw)={kl:.4f} | EMA={self._kl_ema:.4f} | target≈{self.target_kl:.2f} → {action} β={self.model.beta.numpy():.6f}")
+        if (epoch + 1) % self.print_every == 0:
+            print(f"[KLThresholdCallback] ep {epoch+1}  KL={kl:.4f}  EMA={self._ema:.4f}  "
+                  f"target={self.target_kl:.2f}  β={self.model.beta.numpy():.6f}  {action}")
+
 
 
 class BetaVAEMonitor(tf.keras.callbacks.Callback):
