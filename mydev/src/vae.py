@@ -51,7 +51,6 @@ class BetaVAE(models.Model):
         self.reconstruction_loss_tracker = metrics.Mean(name="reconstruction_loss")
         self.kl_unw_tracker              = metrics.Mean(name="kl_loss_unweighted")  # nats per sample
         self.kl_w_tracker                = metrics.Mean(name="kl_loss")             # β * KL
-        self.whiten_reg_tracker          = metrics.Mean(name="whiten_reg")
 
     @property
     def metrics(self):
@@ -60,7 +59,6 @@ class BetaVAE(models.Model):
             self.reconstruction_loss_tracker,
             self.kl_unw_tracker,
             self.kl_w_tracker,
-            self.whiten_reg_tracker,
         ]
 
     def call(self, inputs):
@@ -129,14 +127,12 @@ class BetaVAE(models.Model):
         self.reconstruction_loss_tracker.update_state(recon)
         self.kl_unw_tracker.update_state(kl_unw)
         self.kl_w_tracker.update_state(kl_w)
-        self.whiten_reg_tracker.update_state(reg)
 
         return {
             "loss": self.total_loss_tracker.result(),
             "reconstruction_loss": self.reconstruction_loss_tracker.result(),
             "kl_loss_unweighted": self.kl_unw_tracker.result(),
             "kl_loss": self.kl_w_tracker.result(),
-            "whiten_reg": self.whiten_reg_tracker.result(),
         }
 
     def test_step(self, data):
@@ -151,14 +147,12 @@ class BetaVAE(models.Model):
         self.reconstruction_loss_tracker.update_state(recon)
         self.kl_unw_tracker.update_state(kl_unw)
         self.kl_w_tracker.update_state(kl_w)
-        self.whiten_reg_tracker.update_state(reg)
 
         return {
             "loss": self.total_loss_tracker.result(),
             "reconstruction_loss": self.reconstruction_loss_tracker.result(),
             "kl_loss_unweighted": self.kl_unw_tracker.result(),
             "kl_loss": self.kl_w_tracker.result(),
-            "whiten_reg": self.whiten_reg_tracker.result(),
         }
 
 
