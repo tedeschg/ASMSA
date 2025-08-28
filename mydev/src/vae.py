@@ -18,26 +18,29 @@ def asmsa_block(x, neurons, activation, name_prefix):
     return x
 
 
-
-
 class BetaVAE(models.Model):
     """
-    VAE with:
+    Beta-VAE with:
       - β as a non-trainable tf.Variable you can adjust from callbacks
       - Optional 'cov_reg' whitening regularizer (mean->0, covariance->I)
       - Custom training loop (no `loss=` in compile)
-      - Logged metrics: total loss, recon, KL (unweighted and β-weighted),
+      - Logged metrics: total loss, reconstruction, KL (unweighted and β-weighted),
         whitening regularizer value, β, and current cov_reg weight
+
+    You can plug any reconstruction loss by passing `recon_fn`:
+        recon_fn(y_true, y_pred) -> per-sample loss (shape (B,)) or a scalar.
     """
     def __init__(self, encoder, decoder,
                  recon_loss_weight=1.0,
                  beta=0.1,
                  cov_reg=0.0,
+                 recon_fn=None,
                  **kwargs):
         super().__init__(**kwargs)
         self.encoder = encoder
         self.decoder = decoder
         self.recon_loss_weight = float(recon_loss_weight)
+        self.recon_fn = recon_fn
 
         # Non-trainable variables so callbacks can adjust them
         self.beta    = tf.Variable(float(beta),    trainable=False, dtype=tf.float32, name="beta")
@@ -49,8 +52,6 @@ class BetaVAE(models.Model):
         self.kl_unw_tracker              = metrics.Mean(name="kl_loss_unweighted")  # nats per sample
         self.kl_w_tracker                = metrics.Mean(name="kl_loss")             # β * KL
         self.whiten_reg_tracker          = metrics.Mean(name="whiten_reg")
-        self.beta_tracker                = metrics.Mean(name="beta")
-        self.covreg_tracker              = metrics.Mean(name="cov_reg_weight")
 
     @property
     def metrics(self):
@@ -60,8 +61,6 @@ class BetaVAE(models.Model):
             self.kl_unw_tracker,
             self.kl_w_tracker,
             self.whiten_reg_tracker,
-            self.beta_tracker,
-            self.covreg_tracker,
         ]
 
     def call(self, inputs):
@@ -69,10 +68,21 @@ class BetaVAE(models.Model):
         return self.decoder(z)
 
     def _compute_losses(self, x, reconstruction, z_mean, z_log_var):
-        # --- Reconstruction loss (mean per element); tweak weights if you like ---
-        mse = tf.reduce_mean(tf.square(x - reconstruction))
-        mae = tf.reduce_mean(tf.abs(x - reconstruction))
-        recon_loss = (0.8 * mse + 0.2 * mae) * self.recon_loss_weight
+        # --- Reconstruction loss ---
+        if self.recon_fn is not None:
+            recon_raw = self.recon_fn(x, reconstruction)
+            # Accept (B,) or anything reducible; fall back to mean over non-batch dims.
+            if isinstance(recon_raw, tf.Tensor) and recon_raw.shape.rank is not None and recon_raw.shape.rank >= 2:
+                recon_per_sample = tf.reduce_mean(recon_raw, axis=list(range(1, recon_raw.shape.rank)))
+            else:
+                # (B,) or scalar
+                recon_per_sample = recon_raw
+            recon_loss = tf.reduce_mean(recon_per_sample) * self.recon_loss_weight
+        else:
+            # Fallback: per-sample MSE/MAE blend
+            mse = tf.reduce_mean(tf.square(x - reconstruction), axis=1)  # (B,)
+            mae = tf.reduce_mean(tf.abs(x - reconstruction),    axis=1)  # (B,)
+            recon_loss = tf.reduce_mean(0.8 * mse + 0.2 * mae) * self.recon_loss_weight
 
         # --- Unweighted KL (nats per sample): sum over latent dims, mean over batch ---
         z_log_var = tf.clip_by_value(z_log_var, -10.0, 10.0)
@@ -83,8 +93,7 @@ class BetaVAE(models.Model):
         # --- β-weighted KL ---
         kl_w = self.beta * kl_unw
 
-        # --- Whitening regularizer (ALWAYS computed; scaled by cov_reg) ---
-        #     This avoids Python 'if' on tensors (no graph-mode issues).
+        # --- Whitening regularizer (always computed; scaled by cov_reg) ---
         mu = tf.cast(z_mean, tf.float32)                 # (B, d)
         b  = tf.cast(tf.shape(mu)[0], tf.float32)
         d  = tf.shape(mu)[1]
@@ -121,8 +130,6 @@ class BetaVAE(models.Model):
         self.kl_unw_tracker.update_state(kl_unw)
         self.kl_w_tracker.update_state(kl_w)
         self.whiten_reg_tracker.update_state(reg)
-        self.beta_tracker.update_state(self.beta)
-        self.covreg_tracker.update_state(self.cov_reg)
 
         return {
             "loss": self.total_loss_tracker.result(),
@@ -130,8 +137,6 @@ class BetaVAE(models.Model):
             "kl_loss_unweighted": self.kl_unw_tracker.result(),
             "kl_loss": self.kl_w_tracker.result(),
             "whiten_reg": self.whiten_reg_tracker.result(),
-            "beta": self.beta_tracker.result(),
-            "cov_reg_weight": self.covreg_tracker.result(),
         }
 
     def test_step(self, data):
@@ -147,8 +152,6 @@ class BetaVAE(models.Model):
         self.kl_unw_tracker.update_state(kl_unw)
         self.kl_w_tracker.update_state(kl_w)
         self.whiten_reg_tracker.update_state(reg)
-        self.beta_tracker.update_state(self.beta)
-        self.covreg_tracker.update_state(self.cov_reg)
 
         return {
             "loss": self.total_loss_tracker.result(),
@@ -156,16 +159,28 @@ class BetaVAE(models.Model):
             "kl_loss_unweighted": self.kl_unw_tracker.result(),
             "kl_loss": self.kl_w_tracker.result(),
             "whiten_reg": self.whiten_reg_tracker.result(),
-            "beta": self.beta_tracker.result(),
-            "cov_reg_weight": self.covreg_tracker.result(),
         }
 
 
-
-# ==== Builder: encoder/decoder + compile ====
 def asmsa_beta_vae(n_features, latent_dim=2, activation="gelu",
-                   recon_loss_weight=1.0, beta=1e-4):
-    # Encoder
+                   recon_loss_weight=1.0, beta=1e-4,
+                   recon_fn=None):
+    """
+    Builder for the BetaVAE.
+    Expects that `Sampling` and `asmsa_block` are already defined in scope.
+
+    Args:
+        n_features: total number of output features (e.g., nD + nA).
+        latent_dim: latent dimensionality.
+        activation: activation for MLP blocks.
+        recon_loss_weight: global scale applied to reconstruction loss.
+        beta: initial β value.
+        recon_fn: callable(y_true, y_pred) -> per-sample loss (B,) or scalar.
+
+    Returns:
+        (vae, encoder, decoder)
+    """
+    # ----- Encoder -----
     enc_input = layers.Input(shape=(n_features,), name="enc_input")
     x = asmsa_block(enc_input, 128, activation, "enc1")
     x = asmsa_block(x,         64, activation, "enc2")
@@ -176,15 +191,15 @@ def asmsa_beta_vae(n_features, latent_dim=2, activation="gelu",
     z         = Sampling()([z_mean, z_log_var])
     encoder   = models.Model(enc_input, [z_mean, z_log_var, z], name="encoder")
 
-    # (opzionale) init bias di z_log_var per var < 1 all’inizio
+    # (optional) init z_log_var bias for var < 1 at start
     zlv = encoder.get_layer("z_log_var")
     if hasattr(zlv, "bias") and zlv.bias is not None:
         try:
             zlv.bias.assign(tf.constant([-1.0] * latent_dim, dtype=tf.float32))
         except Exception:
-            pass  # se non è ancora buildato, ignora
+            pass  # if not built yet, ignore
 
-    # Decoder
+    # ----- Decoder -----
     dec_input  = layers.Input(shape=(latent_dim,), name="dec_input")
     y = asmsa_block(dec_input,  32, activation, "dec1")
     y = asmsa_block(y,          64, activation, "dec2")
@@ -192,22 +207,26 @@ def asmsa_beta_vae(n_features, latent_dim=2, activation="gelu",
     dec_output = layers.Dense(n_features, activation="linear", name="dec_output")(y)
     decoder    = models.Model(dec_input, dec_output, name="decoder")
 
-    learning_rate = 1e-4
+    # ----- Optimizer -----
     optimizer = tf.keras.optimizers.AdamW(
-    learning_rate=learning_rate,
-    weight_decay=1e-5, 
-    beta_1=0.9,
-    beta_2=0.999
+        learning_rate=1e-4,
+        weight_decay=1e-5,
+        beta_1=0.9,
+        beta_2=0.999
     )
 
-    # Assembla e compila
-    vae = BetaVAE(encoder, decoder,
-              recon_loss_weight=1.0,
-              beta=1e-4,     # initial β
-              cov_reg=0.0,  # start whitening OFF
-              name="beta_vae")   
+    # ----- Assemble -----
+    vae = BetaVAE(
+        encoder,
+        decoder,
+        recon_loss_weight=recon_loss_weight,
+        beta=beta,          # initial β
+        recon_fn=recon_fn,
+        name="beta_vae"
+    )
     vae.compile(optimizer=optimizer)
     return vae, encoder, decoder
+
 
     
 
