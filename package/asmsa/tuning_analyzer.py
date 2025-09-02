@@ -11,7 +11,6 @@ from pickle import UnpicklingError
 
 class TuningAnalyzer():
     def __init__(self,tuning=None):
-        # get latest tuning dir or the one selected by user
         self.tuning_dir = max(glob.glob(os.path.join(f'{os.getcwd()}/analysis', '*/')), key=os.path.getmtime) if tuning==None else tuning
         self.sorted_trials = self._analyze()
         print(f'Analyzing tuning from: {self.tuning_dir}')
@@ -115,19 +114,17 @@ class TuningAnalyzer():
                 for ax, m in zip(axes, measures):
                     y = np.asarray(v[m])
                     ax.plot(x, y, label=k, color=model_colors[k], 
-                           linewidth=2.5,  # Leggermente più spesse per visibilità
-                           alpha=0.9)      # Leggera trasparenza per sovrapposizioni
+                           linewidth=2.5,  
+                           alpha=0.9)      
                     ax.set_ylabel(m)
                     ax.set_ylim(*limits[m])
-                    ax.grid(True, alpha=0.3)  # Griglia leggera per leggibilità
+                    ax.grid(True, alpha=0.3)  
             
-            # X ticks ogni 10
             axes[-1].set_xticks(np.arange(0, num_epochs + 1, 10))
             axes[-1].set_xlabel("Epochs")
             for ax in axes[:-1]:
                 ax.tick_params(labelbottom=False)
             
-            # Legenda migliorata
             handles, labels = axes[0].get_legend_handles_labels()
             uniq_h, uniq_l = [], []
             seen = set()
