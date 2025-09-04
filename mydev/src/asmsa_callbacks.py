@@ -43,5 +43,5 @@ def callbacks(log_dir, latent_dim, monitor="val_loss", model='vae'):
 
     if model == 'vae':
         cb.append(BetaVAEMonitor())
-        cb.append(BetaAnnealingCallback(beta_min=0.001, beta_max=2, n_epochs=50))
+        cb.append(BetaAnnealingCallback(beta_min=0.001, beta_max=2.0, n_epochs=50))
     return cb
