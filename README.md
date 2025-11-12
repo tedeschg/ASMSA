@@ -1,4 +1,4 @@
-# ASMSA: Adversarial Autoencoder for Molecular Simulation Analysis
+# ASMSA: Analisys and Sampling of Molecular dynamic Simulation with Adversarial autoencoder
 
 ASMSA is an Adversarial Autoencoder designed to analyze molecular dynamics (MD) simulations by learning a compact, low-dimensional representation that captures the essential physical and chemical properties of the system.
 In this latent space, spatial proximity corresponds to similarity in molecular behavior or characteristics, allowing for meaningful semantic analysis of complex simulations.
@@ -50,7 +50,7 @@ TODO
 ### 2. tune.ipynb
 ### 3. train.ipynb
 ### 4. plumed.ipynb
-### 5. md.ipnb
+### 5. md.ipynb
 
 ## Support
 TODO
